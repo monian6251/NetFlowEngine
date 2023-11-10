@@ -39,9 +39,9 @@ namespace nfc {
 
     void NetflowController::run() {
         int sock_fd;
-        struct sockaddr_in server{};
-        struct nf_packet_info nfpkt{};
-        socklen_t clientlen = sizeof(struct sockaddr);
+        sockaddr_in server{};
+        nf_packet_info nfpkt{};
+        socklen_t clientlen = sizeof(sockaddr);
 
         // Create a UDP socket
         if ((sock_fd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)) == -1) {
@@ -54,7 +54,7 @@ namespace nfc {
         server.sin_family = AF_INET;
         server.sin_port = htons(port_);
         server.sin_addr.s_addr = htonl(INADDR_ANY);
-        if (bind(sock_fd, (struct sockaddr *) &server, sizeof(server)) == -1) {
+        if (bind(sock_fd, (sockaddr *) &server, sizeof(server)) == -1) {
             LOG(error) << "Failed to bind to port 2055";
             return;
         }
@@ -68,8 +68,8 @@ namespace nfc {
             } else {
                 // Pass the packet to the NetflowPacket class for processing
                 if (nfpkt.src_addr.sa_family == AF_INET) {
-                    struct sockaddr_in *addr;
-                    addr = (struct sockaddr_in *) &nfpkt.src_addr;
+                    sockaddr_in *addr;
+                    addr = (sockaddr_in *) &nfpkt.src_addr;
                     /* we're supporting only IPv4 */
                     nfpkt.src_addr_ipv4 =
                             *((uint32_t *) &(addr->sin_addr));

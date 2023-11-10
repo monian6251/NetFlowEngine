@@ -10,7 +10,8 @@ set(SOURCE_FILES
         NetflowPacket.cpp
         NetflowLog.cpp
         Device.cpp
-        NetflowTemplateV9.cpp)
+        NetflowTemplateV9.cpp
+        NetflowTemplateIpfix.cpp)
 add_executable(NetFlowEngine main.cpp ${SOURCE_FILES})
 
 target_link_libraries(NetFlowEngine  ${Boost_LIBRARIES})

@@ -31,7 +31,8 @@
 
 #include <netinet/in.h>
 #include <sys/types.h>
-#include <stdint.h>
+#include <cstdint>
+#include <cstring>
 
 #define MAX_NF_PACKET_SIZE (64*1024)
 
@@ -40,6 +41,8 @@
 #define MAX_FIELDS_PER_FLOW 100
 
 #define MAX_FLOW_VAL_LEN 32
+
+typedef __int128_t xe_ip;
 
 struct nf_packet_info
 {
@@ -84,17 +87,62 @@ struct nf9_template_item
     struct nf9_fieldtype_and_len typelen[1];
 } __attribute__ ((__packed__));
 
+struct ipfix_header
+{
+    uint16_t version;
+    uint16_t length;
+    uint32_t export_time;
+
+    uint32_t sequence_number;
+    uint32_t observation_domain;
+} __attribute__ ((__packed__));
+
+struct ipfix_template_header
+{
+    uint16_t template_id;
+    uint16_t field_count;
+} __attribute__ ((__packed__));
+
+struct ipfix_inf_element_iana
+{
+    uint16_t id;
+    uint16_t length;
+} __attribute__ ((__packed__));
+
+struct ipfix_inf_element_enterprise
+{
+    uint16_t id;
+    uint16_t length;
+    uint32_t number;
+} __attribute__ ((__packed__));
+
+struct ipfix_stored_template
+{
+    struct ipfix_template_header header;
+
+    struct ipfix_inf_element_enterprise elements[1];
+} __attribute__ ((__packed__));
+
+struct ipfix_flowset_header
+{
+    uint16_t flowset_id;
+    uint16_t length;
+} __attribute__ ((__packed__));
+
 struct template_key
 {
     uint8_t  src_ip_version;
     uint8_t  nf_version;
     uint16_t template_id;
 
-    __int128_t source_ip;
+    xe_ip source_ip;
 
     uint32_t source_id;
     uint32_t epoch;
-} __attribute__ ((__packed__));
 
+    int operator<(const template_key &t) const {
+        return strncmp((const char *)this, (const char *)&t, sizeof(template_key) - 4);
+    }
+} __attribute__ ((__packed__));
 
 #endif //NETFLOWENGINE_NETFLOWCONST_H

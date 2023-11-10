@@ -32,8 +32,10 @@
 #include <cstring>
 #include <vector>
 #include <unordered_map>
+#include <map>
 #include "Device.h"
 #include "NetflowTemplateV9.h"
+#include "NetflowTemplateIpfix.h"
 
 namespace nfc {
 
@@ -43,21 +45,33 @@ namespace nfc {
 
         virtual ~NetflowPacket();
 
-        int process_packet(struct nf_packet_info *nfPacketInfo, size_t len);
+        int process_packet(nf_packet_info *nfPacketInfo, size_t len);
+
         void setDevices(const std::shared_ptr<std::vector<Device>> &devices);
 
     private:
-        int parse_netflow_v9(struct nf_packet_info *npi, size_t len);
-        int parse_netflow_v9_template(struct nf_packet_info *npi, uint8_t **ptr, int length);
-        int parse_netflow_v9_flowset(struct nf_packet_info *npi, uint8_t **ptr,
+        int parse_netflow_v9(nf_packet_info *npi, size_t len);
+
+        int parse_netflow_v9_template(nf_packet_info *npi, uint8_t **ptr, int length);
+
+        int parse_netflow_v9_flowset(nf_packet_info *npi, uint8_t **ptr,
                                      int flowset_id, int length, int count);
 
-        int parse_ipfix(struct nf_packet_info *npi, size_t len);
+        int parse_ipfix(nf_packet_info *npi, size_t len);
+
+        int parse_ipfix_template(nf_packet_info *npi, uint8_t **ptr, int length);
+
+        int parse_ipfix_flowset(nf_packet_info *npi, uint8_t **ptr,
+                                int flowset_id, int length);
+
         int device_get_sampling_rate(uint32_t src_addr_ipv4);
+
         void print_one_flow();
+
     private:
         std::shared_ptr<std::vector<Device>> devices_;
-        std::shared_ptr<std::unordered_map<uint32_t, NetflowTemplateV9>> template_v9_;
+        std::shared_ptr<std::map<template_key, NetflowTemplateV9>> template_v9_;
+        std::shared_ptr<std::map<template_key, NetflowTemplateIpfix>> template_ipfix_;
         std::shared_ptr<std::unordered_map<int, std::pair<int, std::shared_ptr<char>>>> flow_;
 
     };

@@ -26,6 +26,7 @@
 // Created by ubuntu on 2/16/23.
 //
 
+#include <alloca.h>
 #include <arpa/inet.h>
 
 #include "NetflowConst.h"
@@ -34,16 +35,17 @@
 
 namespace nfc {
     NetflowPacket::NetflowPacket() {
-        template_v9_ = std::make_shared<std::unordered_map<uint32_t, NetflowTemplateV9>>();
+        template_v9_ = std::make_shared<std::map<template_key, NetflowTemplateV9>>();
+        template_ipfix_ = std::make_shared<std::map<template_key, NetflowTemplateIpfix>>();
         flow_ = std::make_shared<std::unordered_map<int, std::pair<int, std::shared_ptr<char>>>>();
     }
 
     NetflowPacket::~NetflowPacket() = default;
 
-    int NetflowPacket::process_packet(struct nf_packet_info *npi, size_t len) {
+    int NetflowPacket::process_packet(nf_packet_info *npi, size_t len) {
         uint16_t *version_ptr;
         int version;
-        struct timespec tmsp{};
+        timespec tmsp{};
         int ret = 0;
 
         /* get time for moving averages */
@@ -74,23 +76,23 @@ namespace nfc {
         return ret;
     }
 
-    int NetflowPacket::parse_netflow_v9(struct nf_packet_info *npi, size_t len) {
-        struct nf9_header *header;
+    int NetflowPacket::parse_netflow_v9(nf_packet_info *npi, size_t len) {
+        nf9_header *header;
         int flowset_id, flowset_id_host, length, count;
         uint8_t *ptr;
 
-        header = (struct nf9_header *) npi->rawpacket;
+        header = (nf9_header *) npi->rawpacket;
         npi->source_id = header->source_id;
         npi->epoch = header->unix_secs;
 
         // device_get_sampling_rate(npi->src_addr_ipv4);
 
-        ptr = (uint8_t *) npi->rawpacket + sizeof(struct nf9_header);
+        ptr = (uint8_t *) npi->rawpacket + sizeof(nf9_header);
 
         while (ptr < ((uint8_t *) npi->rawpacket + len)) {
-            struct nf9_flowset_header *flowset_header;
+            nf9_flowset_header *flowset_header;
 
-            flowset_header = (struct nf9_flowset_header *) ptr;
+            flowset_header = (nf9_flowset_header *) ptr;
 
             flowset_id = flowset_header->flowset_id;
             flowset_id_host = ntohs(flowset_id);
@@ -116,12 +118,12 @@ namespace nfc {
         return 1;
     }
 
-    int NetflowPacket::parse_netflow_v9_template(struct nf_packet_info *npi, uint8_t **ptr, int length) {
-        struct nf9_template_item *ptmpl;
+    int NetflowPacket::parse_netflow_v9_template(nf_packet_info *npi, uint8_t **ptr, int length) {
+        nf9_template_item *ptmpl;
         uint16_t template_id, field_count;
         int template_size;
 
-        ptmpl = (struct nf9_template_item *) (*ptr);
+        ptmpl = (nf9_template_item *) (*ptr);
         template_id = ptmpl->template_id;
         field_count = ntohs(ptmpl->field_count);
 
@@ -136,7 +138,7 @@ namespace nfc {
 
         /* search for template in map */
         NetflowTemplateV9 netflowTemplateV9(4, 9, template_id, npi->src_addr_ipv4, npi->source_id);
-        uint32_t tk = netflowTemplateV9.getTemplateKey();
+        template_key tk = netflowTemplateV9.getTemplateKey();
         if (template_v9_->find(tk) != template_v9_->end()) {
             NetflowTemplateV9 oldTemplate = template_v9_->at(tk);
             if (template_size != oldTemplate.getTemplateSize() ||
@@ -153,19 +155,20 @@ namespace nfc {
         return 0;
     }
 
-    int NetflowPacket::parse_netflow_v9_flowset(struct nf_packet_info *npi, uint8_t **ptr, int flowset_id, int length,
+    int NetflowPacket::parse_netflow_v9_flowset(nf_packet_info *npi, uint8_t **ptr, int flowset_id, int length,
                                                 int count) {
         uint8_t *fptr;
-        struct nf9_template_item *tmpl;
-        struct template_key tkey;
+        nf9_template_item *tmpl;
+        template_key tkey{};
         int template_field_count;
 
-        auto tmp = template_v9_->find(NetflowTemplateV9::makeTemplateKey(4, 9, flowset_id));
+        NetflowTemplateV9::makeTemplateKey(&tkey,flowset_id, npi, 9);
+        auto tmp = template_v9_->find(tkey);
         if (tmp == template_v9_->end()) {
             LOG(warning) << "Unknown flowset id " << ntohs(flowset_id) << " .";
             return 1;
         }
-        LOG(info) << "found one template " << flowset_id;
+        LOG(info) << "found one template " << ntohs(flowset_id);
 
         tmpl = tmp->second.getTemplateItem();
         template_field_count = ntohs(tmpl->field_count);
@@ -198,8 +201,147 @@ namespace nfc {
         return 0;
     }
 
-    int NetflowPacket::parse_ipfix(struct nf_packet_info *npi, size_t len) {
-        return 0;
+    int NetflowPacket::parse_ipfix(nf_packet_info *npi, size_t len) {
+        ipfix_header *header;
+        int flowset_id, flowset_id_host, length;
+        uint8_t *ptr;
+
+        header = (ipfix_header *) npi->rawpacket;
+        npi->source_id = header->observation_domain;
+        npi->epoch = header->export_time;
+
+        //sampling_rate_init(npi);
+        LOG(debug) << "ipfix, package sequence: " << ntohl(header->sequence_number) << ", source id "
+                   << ntohl(npi->source_id)
+                   << ", length " << len << ".";
+
+        ptr = (uint8_t *) npi->rawpacket + sizeof(ipfix_header);
+
+        while (ptr < ((uint8_t *) npi->rawpacket + len)) {
+            ipfix_flowset_header *flowset_header;
+
+            flowset_header = (ipfix_flowset_header *) ptr;
+
+            flowset_id = flowset_header->flowset_id;
+            flowset_id_host = ntohs(flowset_id);
+            length = ntohs(flowset_header->length);
+
+            ptr += sizeof(ipfix_flowset_header);
+
+            LOG(debug) << "Flowset " << flowset_id_host << ", length " << length;
+
+            if (flowset_id_host == 2) {
+                if (!parse_ipfix_template(npi, &ptr, length)) {
+                    /* something went wrong in template parser */
+                    break;
+                }
+            } else if (flowset_id_host == 3) {
+                LOG(warning) << "options template ipfix, skipping";
+            } else if (flowset_id_host > 255) {
+                if (!parse_ipfix_flowset(npi, &ptr, flowset_id, length)) {
+
+                    break;
+                }
+            } else {
+                LOG(warning) << "unknown flowset id " << flowset_id_host;
+            }
+
+            ptr += length - sizeof(ipfix_flowset_header);
+        }
+        return 1;
+    }
+
+    int NetflowPacket::parse_ipfix_template(nf_packet_info *npi, uint8_t **ptr, int length) {
+        ipfix_template_header *tmpl_header;
+        ipfix_stored_template *tmpl_db, *tmpl;
+
+        uint16_t template_id, field_count;
+        template_key tkey;
+        int template_size;
+
+        tmpl_header = (ipfix_template_header *) (*ptr);
+        template_id = tmpl_header->template_id;
+        field_count = ntohs(tmpl_header->field_count);
+
+        LOG(info) << "ipfix: template id " << ntohs(template_id) << ", field count: " << field_count << ".";
+
+        /* search for template in database */
+        if (field_count < 1) {
+            LOG(warning) << "ipfix: incorrect field count " << field_count << ".";
+            return 0;
+        }
+        template_size = sizeof(ipfix_template_header)
+                        + sizeof(ipfix_inf_element_enterprise) * field_count;
+        tmpl = (ipfix_stored_template *) alloca(template_size);
+
+        NetflowTemplateIpfix::ipfixTemplateConvert(tmpl, ptr, field_count);
+
+        NetflowTemplateIpfix netflowTemplateIpfix(4, 9, template_id, npi->src_addr_ipv4, npi->source_id);
+        NetflowTemplateIpfix::makeTemplateKey(&tkey, template_id, npi, 10);
+        if (template_ipfix_->find(tkey) != template_ipfix_->end()) {
+            NetflowTemplateIpfix oldTemplate = template_ipfix_->at(tkey);
+            if (template_size != oldTemplate.getTemplateSize() ||
+                memcmp(tmpl, oldTemplate.getTemplateItem(), template_size) != 0) {
+                oldTemplate.setTemplateItem(tmpl, template_size);
+            }
+        } else {
+            netflowTemplateIpfix.setTemplateItem(tmpl, template_size);
+            template_ipfix_->insert(std::make_pair(netflowTemplateIpfix.getTemplateKey(), netflowTemplateIpfix));
+        }
+
+        return 1;
+    }
+
+    int NetflowPacket::parse_ipfix_flowset(nf_packet_info *npi, uint8_t **ptr, int flowset_id, int length) {
+        uint8_t *fptr;
+        int i;
+        ipfix_stored_template *tmpl;
+        template_key tkey{};
+        int template_field_count;
+        int stop = 0;
+        size_t t_id;
+
+        LOG(debug) << "ipfix data, flowset: " << ntohs(flowset_id) << ", length = " << length;
+
+        NetflowTemplateIpfix::makeTemplateKey(&tkey, flowset_id, npi, 10);
+        auto temp = template_ipfix_->find(tkey);
+
+        if (temp == template_ipfix_->end()) {
+            LOG(warning) << "Unknown flowset id " << ntohs(flowset_id);
+            return 0;
+        }
+        tmpl = temp->second.getTemplateItem();
+        template_field_count = ntohs(tmpl->header.field_count);
+
+        fptr = (*ptr);
+        while (!stop) {
+            uint8_t *tmpfptr;
+
+            if ((length - (fptr - (*ptr))) < template_field_count) {
+                break;
+            }
+
+            tmpfptr = fptr;
+
+            for (i = 0; i < template_field_count; i++) {
+                int flength, ftype;
+
+                flength = ntohs(tmpl->elements[i].length);
+                ftype = ntohs(tmpl->elements[i].id);
+                std::shared_ptr<char> value(new char[flength]);
+                memcpy(value.get(), fptr, flength);
+                flow_->insert(std::make_pair(ftype, std::make_pair(flength, value)));
+
+                fptr += flength;
+                if ((fptr - (*ptr)) >= length) {
+                    stop = 1;
+                    break;
+                }
+            }
+            /* print flow or insert db */
+            print_one_flow();
+        }
+        return 1;
     }
 
     void NetflowPacket::setDevices(const std::shared_ptr<std::vector<Device>> &devices) {
@@ -208,7 +350,7 @@ namespace nfc {
 
     int NetflowPacket::device_get_sampling_rate(uint32_t src_addr_ipv4) {
         char ipstr[16];
-        struct in_addr s;
+        in_addr s;
         s.s_addr = htonl(src_addr_ipv4);
         inet_ntop(AF_INET, (void *) &s, ipstr, (socklen_t) sizeof(ipstr));
 

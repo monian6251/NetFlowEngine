@@ -23,14 +23,14 @@
  ******************************************************************************/
 
 //
-// Created by ubuntu on 2/17/23.
+// Created by mo_nian@live.com on 3/3/23.
 //
 
 #include <cstring>
-#include "NetflowTemplateV9.h"
+#include "NetflowTemplateIpfix.h"
 
 namespace nfc {
-    const char * NetflowTemplateV9::filed_type_v9_def[FILED_MAX_V9] = {
+    const char *NetflowTemplateIpfix::filed_type_ipfix_def[FILED_MAX_IPFIX] = {
             "Undefined",
             "IN_BYTES",
             "IN_PKTS",
@@ -113,15 +113,23 @@ namespace nfc {
             "MPLS_LABEL_10"
     };
 
-    NetflowTemplateV9::NetflowTemplateV9(uint8_t srcIpVersion, uint8_t nfVersion, uint16_t templateId, __int128_t sourceIp,
-                                     uint32_t sourceId) : src_ip_version_(srcIpVersion), nf_version_(nfVersion),
-                                                          template_id_(templateId), source_ip_(sourceIp),
-                                                          source_id_(sourceId) {
+    NetflowTemplateIpfix::NetflowTemplateIpfix(uint8_t srcIpVersion, uint8_t nfVersion, uint16_t templateId,
+                                               xe_ip sourceIp, uint32_t sourceId) : src_ip_version_(srcIpVersion),
+                                                                                    nf_version_(nfVersion),
+                                                                                    template_id_(templateId),
+                                                                                    source_ip_(sourceIp),
+                                                                                    source_id_(sourceId) {
         epoch_ = time(nullptr);
         template_item_ = nullptr;
     }
 
-    template_key NetflowTemplateV9::getTemplateKey() const {
+    NetflowTemplateIpfix::~NetflowTemplateIpfix() {
+        if (template_item_ != nullptr) {
+            free(template_item_);
+        }
+    }
+
+    template_key NetflowTemplateIpfix::getTemplateKey() {
         template_key tkey{};
         tkey.src_ip_version = 4;
         tkey.nf_version = nf_version_;
@@ -133,7 +141,7 @@ namespace nfc {
         return tkey;
     }
 
-    void NetflowTemplateV9::makeTemplateKey(template_key *tkey, uint16_t template_id,
+    void NetflowTemplateIpfix::makeTemplateKey(template_key *tkey, uint16_t template_id,
                                                nf_packet_info *npi, uint8_t version) {
         xe_ip addr;
         /* currently we support only IPv4 */
@@ -150,49 +158,72 @@ namespace nfc {
         tkey->epoch = time(NULL);
     }
 
-    void NetflowTemplateV9::setTemplateItem(const nf9_template_item *templateItem, int size) {
+    void NetflowTemplateIpfix::setTemplateItem(const ipfix_stored_template *templateItem, int size) {
         template_size_ = size;
         if (template_item_ != nullptr) {
             free(template_item_);
         }
-        template_item_ = (nf9_template_item *) malloc(size);
+        template_item_ = (ipfix_stored_template *) malloc(size);
         memcpy(template_item_, templateItem, size);
     }
 
-    nf9_template_item *NetflowTemplateV9::getTemplateItem() const {
+    ipfix_stored_template *NetflowTemplateIpfix::getTemplateItem() const {
         return template_item_;
     }
 
-    int NetflowTemplateV9::getTemplateSize() const {
+
+    int NetflowTemplateIpfix::getTemplateSize() const {
         return template_size_;
     }
 
-    const char *NetflowTemplateV9::getFiledTypeV9Def(int type) {
-        if (type < 80 && type >=0) {
-            return filed_type_v9_def[type];
+    const char *NetflowTemplateIpfix::getFiledTypeIpfixDef(int type) {
+        if (type < 80 && type >= 0) {
+            return filed_type_ipfix_def[type];
         } else {
             return "Undefined";
         }
     }
 
-    NetflowTemplateV9::~NetflowTemplateV9() {
-        if (template_item_ != nullptr) {
-            free(template_item_);
+    NetflowTemplateIpfix::NetflowTemplateIpfix(const NetflowTemplateIpfix &netflowTemplateIpfix) {
+        src_ip_version_ = netflowTemplateIpfix.src_ip_version_;
+        nf_version_ = netflowTemplateIpfix.nf_version_;
+        template_id_ = netflowTemplateIpfix.template_id_;
+
+        source_ip_ = netflowTemplateIpfix.source_ip_;
+        source_id_ = netflowTemplateIpfix.source_id_;
+        epoch_ = netflowTemplateIpfix.epoch_;
+        template_size_ = netflowTemplateIpfix.template_size_;
+
+        template_item_ = (ipfix_stored_template *) malloc(template_size_);
+        memcpy(template_item_, netflowTemplateIpfix.template_item_, template_size_);
+    }
+
+    void NetflowTemplateIpfix::ipfixTemplateConvert(ipfix_stored_template *tmpl, uint8_t **ptr,
+                                                    unsigned int field_count) {
+
+        /* copy template header */
+        memcpy(tmpl, *ptr, sizeof(ipfix_template_header));
+
+        /* skip header, seek to data */
+        *ptr += sizeof(ipfix_template_header);
+
+        for (int i = 0; i < field_count; i++) {
+            ipfix_inf_element_enterprise *ent;
+
+            ent = (ipfix_inf_element_enterprise *) (*ptr);
+            if ((ntohs(ent->id) >> 15) & 1) {
+                /* enterprise */
+                tmpl->elements[i].id = ent->id;
+                tmpl->elements[i].length = ent->length;
+                tmpl->elements[i].number = ent->number;
+                *ptr += sizeof(ipfix_inf_element_enterprise);
+            } else {
+                /* iana */
+                tmpl->elements[i].id = ent->id;
+                tmpl->elements[i].length = ent->length;
+                tmpl->elements[i].number = 0;
+                *ptr += sizeof(ipfix_inf_element_iana);
+            }
         }
     }
-
-    NetflowTemplateV9::NetflowTemplateV9(const NetflowTemplateV9 &netflowTemplateV9) {
-        src_ip_version_ = netflowTemplateV9.src_ip_version_;
-        nf_version_ = netflowTemplateV9.nf_version_;
-        template_id_ = netflowTemplateV9.template_id_;
-
-        source_ip_ = netflowTemplateV9.source_ip_;
-        source_id_ = netflowTemplateV9.source_id_;
-        epoch_ = netflowTemplateV9.epoch_;
-        template_size_ = netflowTemplateV9.template_size_;
-
-        template_item_ = (nf9_template_item *) malloc(template_size_);
-        memcpy(template_item_, netflowTemplateV9.template_item_, template_size_);
-    }
-
 } // nfc
